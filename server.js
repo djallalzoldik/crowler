@@ -2,57 +2,49 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 (async () => {
-  const browser = await puppeteer.launch({ args: ['--no-sandbox'], headless: 'new' });
-
-  // Read the list of URLs from the file
+  const browser = await puppeteer.launch({ args: ['--no-sandbox'], headless: true });
   const urls = fs.readFileSync('urls.txt', 'utf-8').split('\n').filter(Boolean);
-
-  // Array to store all network requests
   const allNetworkRequests = [];
 
-  // Iterate through each URL and navigate to it
-  for (const url of urls) {
-    const page = await browser.newPage();
+  await Promise.all(
+    urls.map(async (url) => {
+      const page = await browser.newPage();
+      await page.setRequestInterception(true);
+      const networkRequests = [];
 
-    // Enable the network domain to intercept network requests
-    await page.setRequestInterception(true);
+      page.on('request', (request) => {
+        const url = request.url();
+        
+        // Exclude requests with specific file extensions and data: protocol
+        if (!url.match(/\.(jpg|jpeg|gif|css|tif|tiff|png|ttf|woff|woff2|ico|pdf|svg)$/i) && !url.startsWith('data:')) {
+          networkRequests.push(url);
+          allNetworkRequests.push(url);
+        }
+        
+        request.continue();
+      });
 
-    // Array to store network requests for each URL
-    const networkRequests = [];
+      console.log('Navigating to:', url);
+      await Promise.all([
+        page.goto(url, { waitUntil: 'domcontentloaded' }),
+        page.waitForTimeout(5000), // Adjust this as needed
+      ]);
 
-    // Listen to the request event and save the URL of each request
-    page.on('request', (request) => {
-      networkRequests.push(request.url());
-      allNetworkRequests.push(request.url()); // Save to the global array as well
-      request.continue();
-    });
+      // Define the clickOnButtons function inside page.evaluate
+      await page.evaluate(async () => {
+        const clickOnButtons = async () => {
+          const buttons = await document.querySelectorAll('button');
+          await Promise.all(Array.from(buttons).map((button) => button.click()));
+        };
 
-    console.log('Navigating to:', url);
-    await page.goto(url);
+        await clickOnButtons();
+      });
 
-    // Wait for a while to capture network traffic for each URL
-    await page.waitForTimeout(5000);
+      await page.waitForTimeout(5000); // Adjust this as needed
+      await page.close();
+    })
+  );
 
-    // Run JavaScript code to click on all buttons
-    const clickOnButtons = async () => {
-      const buttons = await document.querySelectorAll('button');
-      for (const button of buttons) {
-        button.click();
-      }
-    };
-
-    await page.evaluate(clickOnButtons);
-
-    // Wait for additional network requests triggered by button clicks
-    await page.waitForTimeout(5000);
-
-    // Close the page after each iteration
-    await page.close();
-  }
-
-  // Save all network requests to a file
   fs.writeFileSync('all-network-requests.txt', allNetworkRequests.join('\n'));
-
-  // Close the browser
   await browser.close();
 })();
